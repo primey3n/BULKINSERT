@@ -1,0 +1,16 @@
+TableName,NRAW
+ColumnName,DataType
+New_Group_Name,String
+Group_name,String
+TYPE_NAME,String
+ROHM_NAME,String
+ORDERNO,String
+LOTNO,String
+TIDAY,DateTime
+DELIVERYDAY,DateTime
+ALLOC_QTY,Int32
+NEW_PRODNO,Int32
+FIN_PROCESS,String
+NEW_RECDAY,DateTime
+NEW_QTY,Int32
+UploadDate,DateTime
