@@ -1,131 +1,146 @@
 using System;
-using System.Collections.Generic;
-using System.ComponentModel;
 using System.Data;
-using System.Drawing;
-using System.Linq;
-using System.Text;
-using System.Windows.Forms;
 using System.Data.SqlClient;
 using System.IO;
-using System.Configuration;
+using System.Linq;
+using System.Text.RegularExpressions;
 
-namespace ProjectApp
+namespace INSERTTODB
 {
-    public partial class SqlBulkCopy_frm : Form
+    class Program
     {
-        public SqlBulkCopy_frm()
+        static void Main(string[] args)
         {
-            InitializeComponent();
-        }
+            Console.WriteLine("== CSV to SQL Bulk Insert ==");
 
-        private void Btn_FileOpen_Click(object sender, EventArgs e)
-        {
-            using (OpenFileDialog openFileDialog = new OpenFileDialog())
+            string csvPath = "data.csv"; // You can pass via args if desired
+            string configPath = "config.txt";
+
+            if (!File.Exists(csvPath) || !File.Exists(configPath))
             {
-                openFileDialog.Filter = "CSV files (*.csv)|*.csv|All files (*.*)|*.*";
-                openFileDialog.Title = "Select a CSV File";
+                Console.WriteLine("CSV or config file missing.");
+                return;
+            }
 
-                if (openFileDialog.ShowDialog() == DialogResult.OK)
-                {
-                    string filePath = openFileDialog.FileName;
-                    string configFilePath = "config.txt"; // Path to your config file
-                    DataTable dataTable = LoadCsvToDataTable(filePath, configFilePath);
+            bool trimValues = true; // Optional: control via args or prompt
+            var dataTable = LoadCsvToDataTable(csvPath, configPath, trimValues);
+            string tableName = GetTableNameFromConfig(configPath);
 
-                    // Get the table name dynamically from the config file
-                    string tableName = GetTableNameFromConfig(configFilePath);
-                    BulkInsertData(dataTable, tableName);
-                }
+            try
+            {
+                BulkInsertData(dataTable, tableName);
+                Console.WriteLine("Data inserted successfully.");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("Error inserting data: " + ex.Message);
             }
         }
 
-
-        private DataTable LoadCsvToDataTable(string filePath, string configFilePath)
+        static DataTable LoadCsvToDataTable(string filePath, string configFilePath, bool trim)
         {
             DataTable dataTable = new DataTable();
-
-            // Load column definitions from the config file
             LoadColumnDefinitions(dataTable, configFilePath);
 
-            // Load data from the CSV file
-            foreach (var line in File.ReadLines(filePath).Skip(1)) // Skip header
+            using (StreamReader reader = new StreamReader(filePath))
             {
-                var values = line.Split(',');
-                var row = dataTable.NewRow();
+                string headerLine = reader.ReadLine(); // skip header
+                string line;
 
-                for (int i = 0; i < values.Length; i++)
+                while ((line = reader.ReadLine()) != null)
                 {
-                    // Trim the value and check conditions before assigning
-                    Boolean Delspace = rb_DelSpaceYes.Checked;
-                    string trimmedValue = values[i];
+                    string[] values = ParseCsvLine(line);
 
-                    if (Delspace == true) { trimmedValue.Trim(); }// MessageBox.Show("1"); }
-                    //string trimmedValue = values[i].Trim();
-                    if (string.IsNullOrWhiteSpace(trimmedValue))
+                    if (values.Length != dataTable.Columns.Count)
                     {
-                        row[i] = DBNull.Value; // Assign DBNull for empty values
+                        Console.WriteLine("Skipping row: column count mismatch.");
+                        continue;
                     }
-                    else
+
+                    DataRow row = dataTable.NewRow();
+                    for (int i = 0; i < values.Length; i++)
                     {
-                        // Convert the trimmed value to the column's data type
-                        row[i] = Convert.ChangeType(trimmedValue, dataTable.Columns[i].DataType);
+                        string value = trim ? values[i].Trim() : values[i];
+                        try
+                        {
+                            row[i] = string.IsNullOrWhiteSpace(value)
+                                ? DBNull.Value
+                                : Convert.ChangeType(value, dataTable.Columns[i].DataType);
+                        }
+                        catch
+                        {
+                            row[i] = DBNull.Value;
+                        }
                     }
+
+                    dataTable.Rows.Add(row);
                 }
-
-                dataTable.Rows.Add(row);
             }
 
             return dataTable;
         }
 
+        static string[] ParseCsvLine(string line)
+        {
+            var pattern = @"
+                (?!\s*$)                                     
+                \s*                                          
+                (?:                                          
+                  ""(?<val>[^""]*(?:""""[^""]*)*)""           
+                  |                                          
+                  (?<val>[^,""]*)                            
+                )
+                \s*                                          
+                (?:,|$)                                       ";
 
-        private string GetTableNameFromConfig(string configFilePath)
+            var matches = Regex.Matches(line, pattern, RegexOptions.IgnorePatternWhitespace);
+            return matches.Cast<Match>().Select(m => m.Groups["val"].Value.Replace("\"\"", "\"")).ToArray();
+        }
+
+        static string GetTableNameFromConfig(string configFilePath)
         {
             var configLines = File.ReadAllLines(configFilePath);
             var tableNameLine = configLines.FirstOrDefault(line => line.StartsWith("TableName"));
             if (tableNameLine != null)
             {
                 var values = tableNameLine.Split(',');
-                return values[1].Trim(); // Return the table name
+                return values[1].Trim();
             }
-            return "DefaultTableName"; // Fallback if not found
+            return "DefaultTableName"; // Default fallback value
         }
 
-        private void LoadColumnDefinitions(DataTable dataTable, string configFilePath)
+        static void LoadColumnDefinitions(DataTable dataTable, string configFilePath)
         {
             var configLines = File.ReadAllLines(configFilePath);
-            foreach (var line in configLines.Skip(2)) // Skip the first two lines (table name and column header)
+            foreach (var line in configLines.Skip(2)) // Skip the first two lines (header and table name)
             {
                 var values = line.Split(',');
                 string columnName = values[0].Trim();
                 string dataType = values[1].Trim();
-                // Ensure the data type is correctly formatted
                 Type type = Type.GetType("System." + dataType, true);
                 dataTable.Columns.Add(columnName, type);
             }
         }
 
-        private void BulkInsertData(DataTable dataTable, string tableName)
+        static void BulkInsertData(DataTable dataTable, string tableName)
         {
-            string connectionString = ConfigurationManager.ConnectionStrings["MyConString"].ConnectionString;
-
+            // Embed connection string directly here
+            string connectionString = "Server="YourServer"; Database=YourDB; User Id=YourID; Password=YourPassword;";
             using (SqlConnection connection = new SqlConnection(connectionString))
             {
                 connection.Open();
-                using (System.Data.SqlClient.SqlBulkCopy bulkCopy = new System.Data.SqlClient.SqlBulkCopy(connection))
+                using (SqlBulkCopy bulkCopy = new SqlBulkCopy(connection))
                 {
-                    bulkCopy.DestinationTableName = tableName; // Use the dynamic table name
+                    bulkCopy.DestinationTableName = tableName;
 
-                    // Create column mappings dynamically
                     foreach (DataColumn column in dataTable.Columns)
                     {
-                        // Adjust this if your SQL table column names differ
                         bulkCopy.ColumnMappings.Add(column.ColumnName, column.ColumnName);
                     }
 
-                    // Perform the bulk copy
                     bulkCopy.WriteToServer(dataTable);
                 }
             }
-
-            MessageBox.Show("Data inserted successfully.");
+        }
+    }
+}
